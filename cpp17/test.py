@@ -85,7 +85,8 @@ class RSC:
         self.c_lib.decode(self.gf_ctx, res, len(a))
         return list(res)
 
-os.system('g++ -O3 -std=c++17 -Wall -shared -fPIC ./lib.cpp -o lib.so')
+if os.system('g++ -O3 -std=c++17 -Wall -shared -fPIC ./lib.cpp -o lib.so') != 0:
+    quit()
 
 ecc_len = 4
 GF = rs.GF

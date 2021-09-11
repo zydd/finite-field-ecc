@@ -21,7 +21,7 @@ void benchmark_enc_dec() {
 
     uint8_t buffer[msglen + ecclen];
 
-    using GF = ::GF<2, 0x11d, gf_exp_log_lut, gf_mul_exp_log_lut>;
+    using GF = ::GF<uint8_t, 2, 0x11d & 0xff, gf_exp_log_lut, gf_mul_exp_log_lut>;
     using RS = ::RS<GF, ecclen, rs_encode_basic, rs_synds_lut8, rs_roots_eval_basic, rs_decode>;
 
     std::cout << "sizeof(RS<" << ecclen << ">) = " << sizeof(RS) << std::endl;

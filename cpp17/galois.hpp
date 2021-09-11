@@ -6,8 +6,9 @@
 #include <cstdint>
 #include <cstring>
 
-template<uint8_t Primitive, uint16_t Poly1>
+template<typename T, T Primitive, T Poly1>
 struct gf_base {
+    using Repr = T;
     static constexpr auto primitive = Primitive;
     static constexpr auto poly1 = Poly1;
 };
@@ -299,16 +300,16 @@ struct gf_poly {
     }
 };
 
-template<uint8_t Primitive, uint16_t Poly1, template<class>typename...Fs>
-struct gf_impl_base : gf_base<Primitive, Poly1>, Fs<gf_base<Primitive, Poly1>>... { };
+template<typename T, T Primitive, T Poly1, template<class>typename...Fs>
+struct gf_impl_base : gf_base<T, Primitive, Poly1>, Fs<gf_base<T, Primitive, Poly1>>... { };
 
 template<typename Impl, template<class>typename...Fs>
-struct gf_impl : gf_base<Impl::primitive, Impl::poly1>, Fs<Impl>... {
+struct gf_impl : gf_base<typename Impl::Repr, Impl::primitive, Impl::poly1>, Fs<Impl>... {
     static inline auto static_data_size = detail::get_sdata_size<Fs<Impl>...>();
 };
 
-template<uint8_t Primitive, uint16_t Poly1, template<class>typename...Fs>
+template<typename T, T Primitive, T Poly1, template<class>typename...Fs>
 struct GF :
-        gf_impl<gf_impl_base<Primitive, Poly1, Fs...>, Fs...>,
-        gf_poly<gf_impl<gf_impl_base<Primitive, Poly1, Fs...>, Fs...>>
+        gf_impl<gf_impl_base<T, Primitive, Poly1, Fs...>, Fs...>,
+        gf_poly<gf_impl<gf_impl_base<T, Primitive, Poly1, Fs...>, Fs...>>
 { };
