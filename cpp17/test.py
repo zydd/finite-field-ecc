@@ -12,6 +12,12 @@ import gf
 import bch
 import rs
 
+def test(fn):
+    def _wrapper(*args, **kwargs):
+        print(f'{fn.__name__}')
+        fn(*args, **kwargs)
+    return _wrapper
+
 class RSC:
     def __init__(self, power, prim, poly, ecc_len):
         self.c_lib = ctypes.CDLL('./lib.so')
@@ -22,6 +28,7 @@ class RSC:
         self.c_lib.gf_inv.restype       = ctypes.c_uint8
         self.c_lib.gf_div.restype       = ctypes.c_uint8
         self.c_lib.gf_init.restype      = ctypes.c_void_p
+        self.c_lib.gf_mul16.restype     = ctypes.c_uint16
         self.c_lib.ex_synth_div.restype = ctypes.c_uint
         self.c_lib.gf_poly_mul.restype  = ctypes.c_uint
         self.c_lib.gf_poly_eval.restype = ctypes.c_uint8
@@ -34,6 +41,9 @@ class RSC:
 
     def gf_mul(self, a, b):
         return self.c_lib.gf_mul(self.gf_ctx, ctypes.c_uint8(a), ctypes.c_uint8(b))
+
+    def gf_mul16(self, a, b):
+        return self.c_lib.gf_mul16(self.gf_ctx, ctypes.c_uint16(a), ctypes.c_uint16(b))
 
     def gf_mul4(self, a, b):
         return self.c_lib.gf_mul4(self.gf_ctx, ctypes.c_uint32(a), ctypes.c_uint32(b))
@@ -94,21 +104,28 @@ poly = GF.poly_to_int(GF.p, GF.poly)
 print(f'init field: power: {GF.k} prim: {GF.a} poly: 0x{poly:x}')
 RS = RSC(GF.k, GF.a, poly, ecc_len)
 
+GF64k = gf.GF(2, 16, *next(GF.irr_polynomials(2, 16, 2)))
+poly = GF64k.poly_to_int(GF64k.p, GF64k.poly)
+print(f'init field: power: {GF64k.k} prim: {GF64k.a} poly: 0x{poly:x}')
+
 def assert_eq(a, b, l, r):
     assert l == r, (int(a), int(b), int(l), int(r))
 
+@test
 def test_mul():
     for a in range(GF.p ** GF.k):
         for b in range(GF.p ** GF.k):
             assert_eq(a, b, int(GF(a) * GF(b)), RS._mul(a, b))
         print(f'{a}/255    ', end='\r')
 
+@test
 def test_gf_mul():
     for a in range(GF.p ** GF.k):
         for b in range(GF.p ** GF.k):
             assert_eq(a, b, int(GF(a) * GF(b)), RS.gf_mul(a, b))
         print(f'{a}/255    ', end='\r')
 
+@test
 def test_gf_mul4():
     for a in range(GF.p ** GF.k):
         for b in range(GF.p ** GF.k):
@@ -122,16 +139,28 @@ def test_gf_mul4():
             assert_eq(a, b, int(GF(a) * GF(b)), RS.gf_mul4(a, b))
         print(f'{a}/255    ', end='\r')
 
+@test
 def test_gf_inv():
     for a in range(1, GF.p ** GF.k):
         assert_eq(a, -1, int(GF(a).inv()), RS.gf_inv(a))
 
+@test
 def test_gf_div():
     for a in range(GF.p ** GF.k):
         for b in range(1, GF.p ** GF.k):
             assert_eq(a, b, int(GF(a) // GF(b)), RS.gf_div(a, b))
         print(f'{a}/255    ', end='\r')
 
+@test
+def test_gf_mul16():
+    for i in range(50000):
+        a = random.randrange(GF64k.p ** GF64k.k)
+        b = random.randrange(GF64k.p ** GF64k.k)
+        assert_eq(a, b, int(GF64k(a) * GF64k(b)), RS.gf_mul16(a, b))
+        if i & 0xff == 0:
+            print(f'{i}/100000    ', end='\r')
+
+@test
 def test_ex_synth_div():
     for len_a in range(32):
         for len_b in range(1, len_a + 2):
@@ -152,6 +181,7 @@ def test_ex_synth_div():
                 assert False
         print(f'{len_a}/31    ', end='\r')
 
+@test
 def test_poly_mod():
     for len_a in range(100):
         for len_b in range(1, len_a + 2):
@@ -167,6 +197,7 @@ def test_poly_mod():
 
         print(f'{len_a}/99    ', end='\r')
 
+@test
 def test_poly_eval():
     for i in range(32):
         for x in range(GF.p ** GF.k):
@@ -177,6 +208,7 @@ def test_poly_eval():
             assert int(gfpoly.eval(GF(x))) == RS.poly_eval(a, x)
         print(f'{i}/31    ', end='\r')
 
+@test
 def test_poly_eval4():
     for i in range(32):
         a = [random.randrange(GF.p ** GF.k) for _ in range(i)]
@@ -187,6 +219,7 @@ def test_poly_eval4():
 
         assert r1 == r2
 
+@test
 def test_poly_mul():
     for i in range(20):
         for j in range(20):
@@ -197,6 +230,7 @@ def test_poly_mul():
 
             assert list(map(int, ref.x[::-1])) == RS.poly_mul(a,b)
 
+@test
 def test_encode():
     gen = rs.rs_generator(ecc_len)
     for _ in range(10):
@@ -212,6 +246,7 @@ def test_encode():
             print(f'ref: {ref}')
             assert False
 
+@test
 def test_decode():
     for _ in range(10000):
         a = [random.randrange(GF.p ** GF.k) for _ in range(12)]
@@ -242,6 +277,7 @@ if __name__ == '__main__':
     test_mul()
     test_gf_mul()
     test_gf_mul4()
+    test_gf_mul16()
     test_gf_inv()
     test_gf_div()
     test_ex_synth_div()

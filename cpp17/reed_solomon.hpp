@@ -17,10 +17,10 @@ struct rs_base {
 template<typename RS>
 struct rs_generator {
     static inline constexpr struct sdata_t {
-        std::array<uint8_t, RS::ecc + 1> generator{};
+        std::array<typename RS::GF::Repr, RS::ecc + 1> generator{};
 
         inline constexpr sdata_t() {
-            std::array<uint8_t, RS::ecc + 1> temp{};
+            std::array<typename RS::GF::Repr, RS::ecc + 1> temp{};
 
             auto p1 = (RS::ecc & 1) ? &generator[0] : &temp[0];
             auto p2 = (RS::ecc & 1) ? &temp[0] : &generator[0];
@@ -29,7 +29,7 @@ struct rs_generator {
             p2[0] = 1;
 
             for (unsigned i = 0; i < RS::ecc; ++i) {
-                uint8_t factor[] = {1, RS::GF::exp(i)};
+                typename RS::GF::Repr factor[] = {1, RS::GF::exp(i)};
                 len = RS::GF::poly_mul(p1, p2, len, factor, 2);
 
                 auto t = p1;

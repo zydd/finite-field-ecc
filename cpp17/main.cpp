@@ -21,7 +21,7 @@ void benchmark_enc_dec() {
 
     uint8_t buffer[msglen + ecclen];
 
-    using GF = ::GF<uint8_t, 2, 0x11d & 0xff, gf_exp_log_lut, gf_mul_exp_log_lut>;
+    using GF = ::GF<uint8_t, 2, 8, 2, 0x11d & 0xff, gf_add_xor, gf_exp_log_lut, gf_mul_exp_log_lut>;
     using RS = ::RS<GF, ecclen, rs_encode_basic, rs_synds_lut8, rs_roots_eval_basic, rs_decode>;
 
     std::cout << "sizeof(RS<" << ecclen << ">) = " << sizeof(RS) << std::endl;
@@ -67,9 +67,8 @@ void benchmark_enc_dec() {
 }
 
 int main(int argc, char *argv[]) {
-    // static_assert(GF<2, 0x11d, gf_mul_cpu>::mul(1, 1) == 1);
-    // static_assert(GF<2, 0x11d, gf_mul_lut>::mul(1, 1) == 1); // slow to compile
-    // static_assert(GF<2, 0x11d, gf_mul_exp_log_lut>::mul(1, 1) == 1);
+    using GF = GF<uint8_t, 2, 8, 2, 0x11d & 0xff, gf_mul_cpu>;
+    static_assert(GF(GF::mul(23, 47)) == GF(23) * GF(47));
 
     mersenne.seed(42);
     benchmark_enc_dec();

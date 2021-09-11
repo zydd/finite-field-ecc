@@ -2,7 +2,7 @@
 #include "reed_solomon.hpp"
 
 static const auto ecclen = 4;
-using GF256 = GF<uint8_t, 2, 0x11d & 0xff, gf_exp_log_lut, gf_mul_exp_log_lut>;
+using GF256 = GF<uint8_t, 2, 8, 2, 0x11d & 0xff, gf_add_xor, gf_exp_log_lut, gf_mul_exp_log_lut>;
 using RS0 = RS<GF256, ecclen, rs_encode_basic, rs_synds_lut8, rs_roots_eval_basic, rs_decode>;
 
 extern "C" {
@@ -20,7 +20,11 @@ uint8_t gf_mul(void *rs, uint8_t a, uint8_t b) {
 }
 
 uint8_t _mul(void *rs, uint8_t a, uint8_t b) {
-    return GF<uint8_t, 2, 0x11d & 0xff, gf_exp_log_lut, gf_mul_cpu>::mul(a, b);
+    return GF<uint8_t, 2, 8, 2, 0x11d & 0xff, gf_mul_cpu>::mul(a, b);
+}
+
+uint16_t gf_mul16(void *rs, uint16_t a, uint16_t b) {
+    return GF<uint16_t, 2, 16, 2, 0x1002d & 0xffff, gf_mul_cpu>::mul(a, b);
 }
 
 uint32_t gf_mul4(void *rs, uint32_t a, uint32_t b) {
