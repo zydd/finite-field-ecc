@@ -7,14 +7,14 @@
 #include <cstring>
 
 namespace detail {
-    static inline constexpr unsigned log2_floor(unsigned a) {
+    static inline constexpr unsigned ilog2_floor(unsigned a) {
         unsigned r = 0;
         while (a >>= 1)
             r += 1;
         return r;
     }
 
-    static inline constexpr unsigned pow(unsigned a, unsigned b) {
+    static inline constexpr unsigned ipow(unsigned a, unsigned b) {
         unsigned r = 1;
         for (unsigned i = 0; i < b; ++i)
             r *= a;
@@ -30,7 +30,21 @@ struct gf_base {
     static constexpr auto power = Power;
     static constexpr auto primitive = Primitive;
     static constexpr auto poly1 = Poly1;
-    static constexpr auto charact = detail::pow(prime, power);
+    static constexpr auto charact = detail::ipow(prime, power);
+};
+
+
+template<typename GF>
+struct gf_add_mul_ring {
+    using T = typename GF::Repr;
+    static inline constexpr T mul(T const& lhs, T const& rhs) { return (lhs * rhs) % GF::prime; }
+    static inline constexpr T add(T const& lhs, T const& rhs) { return (lhs + rhs) % GF::prime; }
+    static inline constexpr T sub(T const& lhs, T const& rhs) {
+        if (lhs >= rhs) 
+            return (lhs - rhs) % GF::prime;
+        else
+            return ((GF::charact - rhs) + lhs) % GF::prime;
+    }
 };
 
 
@@ -39,18 +53,16 @@ struct gf_add_xor {
     using T = typename GF::Repr;
     static inline constexpr T add(T const& lhs, T const& rhs) { return lhs ^ rhs; }
     static inline constexpr T sub(T const& lhs, T const& rhs) { return lhs ^ rhs; }
-    static inline constexpr T& addi(T& lhs, T const& rhs) { return (lhs ^= rhs); }
-    static inline constexpr T& subi(T& lhs, T const& rhs) { return (lhs ^= rhs); }
 };
 
 template<typename GF>
 struct gf_mul_cpu {
-    using T = typename GF::Repr;
+    using GFT = typename GF::Repr;
 
-    static inline constexpr T mul(T const& a, T const& b) {
-        T r = 0;
+    static inline constexpr GFT mul(GFT const& a, GFT const& b) {
+        GFT r = 0;
         
-        constexpr auto iter = detail::log2_floor(GF::charact >> 1);
+        constexpr auto iter = detail::ilog2_floor(GF::charact >> 1);
         for (int i = iter; i >= 0; --i) {
             if (r & (GF::charact >> 1))
                 r = (r << 1) ^ GF::poly1;
@@ -67,14 +79,14 @@ struct gf_mul_cpu {
 
 template<typename GF>
 struct gf_exp_log_lut {
-    using T = typename GF::Repr;
+    using GFT = typename GF::Repr;
 
     static inline constexpr struct sdata_t {
-        std::array<T, GF::charact> exp{};
-        std::array<T, GF::charact> log{};
+        std::array<GFT, GF::charact> exp{};
+        std::array<GFT, GF::charact> log{};
 
         constexpr inline sdata_t() {
-            T x = 1;
+            GFT x = 1;
             for (unsigned i = 0; i < GF::charact; ++i) {
                 exp[i] = x;
                 log[x] = i;
@@ -83,11 +95,11 @@ struct gf_exp_log_lut {
         }
     } sdata{};
 
-    static inline constexpr T inv(T const& a) {
+    static inline constexpr GFT inv(GFT const& a) {
         return sdata.exp[GF::charact-1 - sdata.log[a]];
     }
 
-    static inline constexpr T div(T const& a, T const& b) {
+    static inline constexpr GFT div(GFT const& a, GFT const& b) {
         if (a == 0)
             return 0;
 
@@ -98,22 +110,22 @@ struct gf_exp_log_lut {
         return sdata.exp[r];
     }
 
-    static inline constexpr T exp(T const& a) {
+    static inline constexpr GFT exp(GFT const& a) {
         return sdata.exp[a];
     }
 
-    static inline constexpr T log(T const& a) {
+    static inline constexpr GFT log(GFT const& a) {
         return sdata.log[a];
     }
 };
 
 template<typename GF>
 struct gf_mul_lut {
-    using T = typename GF::Repr;
+    using GFT = typename GF::Repr;
     static_assert(GF::charact <= 4096); // limit 16MB
 
     static inline constexpr struct sdata_t {
-        std::array<std::array<T, GF::charact>, GF::charact> mul{};
+        std::array<std::array<GFT, GF::charact>, GF::charact> mul{};
 
         constexpr inline sdata_t() {
             for (unsigned i = 0; i < GF::charact; ++i) {
@@ -123,18 +135,18 @@ struct gf_mul_lut {
         }
     } sdata{};
 
-    static inline constexpr T mul(T const& a, T const& b) {
+    static inline constexpr GFT mul(GFT const& a, GFT const& b) {
         return sdata.mul[a][b];
     }
 };
 
 template<typename GF>
 struct gf_mul_exp_log_lut {
-    using T = typename GF::Repr;
+    using GFT = typename GF::Repr;
 
     static constexpr auto& sdata = gf_exp_log_lut<GF>::sdata;
 
-    static inline constexpr T mul(T const& a, T const& b) {
+    static inline constexpr GFT mul(GFT const& a, GFT const& b) {
         if (a == 0 || b == 0)
             return 0;
 
@@ -206,8 +218,9 @@ namespace detail {
 
 template<typename GF>
 struct gf_poly {
-    using T = typename GF::Repr;
+    using GFT = typename GF::Repr;
 
+    template<typename T>
     static inline constexpr unsigned ex_synth_div(T a[], unsigned size_a, const T b[], unsigned size_b) {
         // T normalizer = b[0];
         // assert(b[0] == 1);
@@ -222,12 +235,13 @@ struct gf_poly {
                 continue;
 
             for (unsigned j = 1; j < size_b; ++j)
-                GF::subi(a[i + j], GF::mul(b[j], coef));
+                a[i + j] = GF::sub(a[i + j], GF::mul(b[j], coef));
         }
 
         return size_a - size_b + 1;
     }
 
+    template<typename T>
     static inline constexpr unsigned poly_mod(T r[], const T a[], unsigned size_a, const T b[], unsigned size_b) {
         // assert(b[0] == 1);
         b += 1;
@@ -250,15 +264,16 @@ struct gf_poly {
                 continue;
 
             for (unsigned j = 0; j < size_r; ++j)
-                GF::subi(r[j], GF::mul(b[j], c));
+                r[j] = GF::sub(r[j], GF::mul(b[j], c));
         }
 
         return size_r;
     }
 
+    template<typename T, typename U, typename V>
     static inline constexpr void poly_mod_x_n(T rem[],
-            const T a[], const unsigned size_a,
-            const T b[], const unsigned size_b)
+            const U a[], const unsigned size_a,
+            const V b[], const unsigned size_b)
     {
         if (size_a >= size_b) {
             std::copy_n(a, size_b, rem);
@@ -271,7 +286,7 @@ struct gf_poly {
                     continue;
 
                 for (unsigned j = 0; j < size_b; ++j)
-                    GF::subi(rem[j], GF::mul(b[j], c));
+                    rem[j] = GF::sub(rem[j], GF::mul(b[j], c));
                 // std::transform(&rem[0], &rem[size_b], &b[0], &rem[0],
                 //         [c](T a, T b) { return GF::sub(a, GF::mul(b, c)); });
             }
@@ -289,17 +304,19 @@ struct gf_poly {
                 continue;
 
             for (unsigned j = 0; j < size_b; ++j)
-                GF::subi(rem[j], GF::mul(b[j], c));
+                rem[j] = GF::sub(rem[j], GF::mul(b[j], c));
         }
     }
 
-    static inline constexpr T poly_eval(const T poly[], const unsigned size, T const& x) {
+    template<typename T>
+    static inline constexpr GFT poly_eval(const T poly[], const unsigned size, GFT const& x) {
         T r = 0;
         for (unsigned i = 0; i < size; ++i)
             r = GF::add(GF::mul(r, x), poly[i]);
         return r;
     }
 
+    template<typename T>
     static inline constexpr void poly_shift(T poly[], const unsigned size, const unsigned n) {
         unsigned i = 0;
         for (; i < size - n; ++i)
@@ -308,19 +325,22 @@ struct gf_poly {
             poly[i] = 0;
     }
 
+    template<typename T>
     static inline constexpr void poly_scale(T poly[], const unsigned size, T const& a) {
         for (unsigned i = 0; i < size; ++i)
             poly[i] = GF::mul(a, poly[i]);
     }
 
+    template<typename T>
     static inline constexpr void poly_add(T poly_a[], const T poly_b[], const unsigned size) {
         for (unsigned i = 0; i < size; ++i)
-            GF::addi(poly_a[i], poly_b[i]);
+            poly_a[i] = GF::add(poly_a[i], poly_b[i]);
     }
 
-    static inline constexpr unsigned poly_mul(typename GF::Repr r[],
-            const typename GF::Repr poly_a[], const unsigned size_a,
-            const typename GF::Repr poly_b[], const unsigned size_b) {
+    template<typename T, typename U>
+    static inline constexpr unsigned poly_mul(GFT r[],
+            T poly_a[], const unsigned size_a,
+            U poly_b[], const unsigned size_b) {
         unsigned res_len = size_a + size_b - 1;
 
         for (unsigned i = 0; i < res_len; ++i)
@@ -328,11 +348,12 @@ struct gf_poly {
 
         for (unsigned i = 0; i < size_a; ++i)
             for (unsigned j = 0; j < size_b; ++j)
-                GF::addi(r[i + j], GF::mul(poly_a[i], poly_b[j]));
+                r[i + j] = GF::add(r[i + j], GF::mul(poly_a[i], poly_b[j]));
 
         return res_len;
     }
 
+    template<typename T>
     static inline constexpr unsigned poly_deriv(T poly[], unsigned size) {
         if (size & 1) {
             for (unsigned i = 0; i < size - 1; ++i)

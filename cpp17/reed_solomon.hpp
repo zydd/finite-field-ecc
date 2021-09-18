@@ -7,6 +7,76 @@
 
 #include "galois.hpp"
 
+namespace detail {
+    template<typename T, unsigned Bits>
+    struct bit_array {
+        static_assert(Bits <= sizeof(T) * 8);
+
+        uint8_t *ptr;
+
+        struct bit_field {
+            uint8_t *ptr;
+            uint8_t offset;
+
+            void operator=(T const& in) {
+                auto ptr = this->ptr;
+                auto offset = this->offset;
+
+                for (unsigned i = 0; i < Bits;) {
+                    uint8_t val;
+                    uint8_t mask = 0xff >> offset;
+
+                    uint8_t rem_bits = Bits - i;
+                    uint8_t avail_bits = 8 - offset;
+
+                    if (rem_bits < avail_bits) {
+                        val = in << (avail_bits - rem_bits);
+                        mask &= 0xff << (avail_bits - rem_bits);
+                    } else {
+                        val = in >> (rem_bits - avail_bits);
+                    }
+
+                    *ptr++ = (*ptr & ~mask) | (val & mask);
+                    i += avail_bits;
+                    offset = 0;
+                }
+            }
+
+            operator T() const {
+                auto ptr = this->ptr;
+                auto offset = this->offset;
+                T ret = 0;
+
+                for (unsigned i = 0; i < Bits;) {
+                    uint8_t mask = 0xff >> offset;
+
+                    uint8_t rem_bits = Bits - i;
+                    uint8_t avail_bits = 8 - offset;
+
+                    if (rem_bits < avail_bits) {
+                        mask &= 0xff << (avail_bits - rem_bits);
+
+                        ret <<= rem_bits;
+                        ret |= (*ptr++ & mask) >> (avail_bits - rem_bits);
+                    } else {
+                        ret <<= avail_bits;
+                        ret |= (*ptr++ & mask);
+                    }
+
+                    i += avail_bits;
+                    offset = 0;
+                }
+                return ret;
+            }
+        };
+
+        bit_field operator[](int i) {
+            auto bit_i = i * Bits;
+            return bit_field{ptr + (bit_i >> 3), uint8_t(bit_i & 0x07)};
+        }
+    };
+}
+
 
 template<typename GF_t, unsigned Ecc>
 struct rs_base {
@@ -44,9 +114,10 @@ template<typename RS>
 struct rs_encode_basic {
     static constexpr auto& generator = rs_generator<RS>::sdata.generator;
 
-    static inline void encode(uint8_t *data, unsigned size) {
+    template<typename S, typename T>
+    static inline void encode(S output, T const& input, unsigned size) {
         auto data_len = size - RS::ecc;
-        RS::GF::poly_mod_x_n(&data[data_len], data, data_len, &generator[1], RS::ecc);
+        RS::GF::poly_mod_x_n(output, input, data_len, &generator[1], RS::ecc);
     }
 };
 
@@ -59,12 +130,12 @@ struct rs_encode_lut_t {
 
         static inline constexpr struct sdata_t {
             union {
-                std::array<std::array<uint8_t, sizeof(Word)>, 256> u8;
-                std::array<Word, 256> word;
+                std::array<std::array<uint8_t, sizeof(Word)>, RS::GF::charact> u8;
+                std::array<Word, RS::GF::charact> word;
             } generator_lut{};
 
             inline constexpr sdata_t() {
-                for (unsigned i = 0; i < 256; ++i) {
+                for (unsigned i = 0; i < RS::GF::charact; ++i) {
                     uint8_t data[RS::ecc + 1] = {uint8_t(i)};
                     RS::GF::ex_synth_div(&data[0], RS::ecc + 1, &generator[0], RS::ecc + 1);
 
@@ -142,6 +213,29 @@ template<typename RS>
 using rs_encode_lut8 = rs_encode_lut_t<uint64_t>::type<RS>;
 
 
+
+template<typename RS>
+struct rs_synds_basic {
+    using GFT = typename RS::GF::Repr;
+    using synds_array_t = GFT[RS::ecc];
+
+    static inline constexpr struct sdata_t {
+        std::array<GFT, RS::ecc> gen_roots{};
+
+        inline constexpr sdata_t() {
+            for (unsigned i = 0; i < RS::ecc; ++i)
+                gen_roots[i] = RS::GF::exp(i);
+        }
+    } sdata{};
+
+    template<typename S>
+    static inline void synds(S const& data, unsigned size, synds_array_t synds) {
+        for (unsigned i = 0; i < RS::ecc; ++i)
+            synds[i] = RS::GF::poly_eval(data, size, sdata.gen_roots[i]);
+    }
+};
+
+
 template<typename Word>
 struct rs_synds_lut_t {
     template<typename RS>
@@ -149,6 +243,7 @@ struct rs_synds_lut_t {
         static constexpr auto ecc_w = (RS::ecc / sizeof(Word)) + !!(RS::ecc % sizeof(Word));
         static constexpr auto synds_size = ecc_w * sizeof(Word);
         static constexpr auto synds_align = sizeof(Word);
+        using synds_array_t alignas(sizeof(Word)) = uint8_t[synds_size];
 
         static inline constexpr struct sdata_t {
             union {
@@ -177,9 +272,11 @@ using rs_synds_lut8 = rs_synds_lut_t<uint64_t>::type<RS>;
 
 template<typename RS>
 struct rs_roots_eval_basic {
+    using GFT = typename RS::GF::Repr;
+
     static inline unsigned roots(
-            const uint8_t poly[], unsigned poly_size,
-            uint8_t roots[], unsigned size)
+            const GFT poly[], unsigned poly_size,
+            GFT roots[], unsigned size)
     {
         unsigned count = 0;
 
@@ -270,29 +367,32 @@ using rs_roots_eval_lut8 = rs_roots_eval_lut_t<uint64_t>::type<RS>;
 
 template<typename RS>
 struct rs_decode {
-    static inline void decode(uint8_t *data, unsigned size) {
-        alignas(RS::synds_align) uint8_t synds[RS::synds_size];
+    using GFT = typename RS::GF::Repr;
+
+    template<typename T>
+    static inline void decode(T& data, unsigned size) {
+        typename RS::synds_array_t synds;
         RS::synds(data, size, synds);
 
-        if (std::all_of(synds, synds + RS::ecc, std::logical_not<uint8_t>()))
+        if (std::all_of(&synds[0], &synds[RS::ecc], std::logical_not()))
             return;
 
-        uint8_t err_poly[RS::ecc];
+        GFT err_poly[RS::ecc];
         auto errors = berlekamp_massey(synds, err_poly);
 
-        uint8_t err_pos[RS::ecc / 2];
+        GFT err_pos[RS::ecc / 2];
         RS::roots(&err_poly[RS::ecc-errors-1], errors+1, err_pos, size);
 
-        uint8_t err_mag[RS::ecc / 2];
+        GFT err_mag[RS::ecc / 2];
         forney(synds, &err_poly[RS::ecc-errors-1], err_pos, errors, err_mag);
 
         for (unsigned i = 0; i < errors; ++i)
             data[size - 1 - err_pos[i]] ^= err_mag[i];
     }
 
-    static inline unsigned berlekamp_massey(const uint8_t synds[RS::ecc], uint8_t err_poly[RS::ecc]) {
-        uint8_t prev[RS::ecc];
-        uint8_t temp[RS::ecc];
+    static inline unsigned berlekamp_massey(const GFT synds[RS::ecc], GFT err_poly[RS::ecc]) {
+        GFT prev[RS::ecc];
+        GFT temp[RS::ecc];
 
         for (unsigned i = 0; i < RS::ecc; ++i) {
             err_poly[i] = 0;
@@ -303,7 +403,7 @@ struct rs_decode {
 
         unsigned errors = 0;
         unsigned m = 1;
-        uint8_t b = 1;
+        GFT b = 1;
 
         for (unsigned n = 0; n < RS::ecc; ++n) {
             unsigned d = synds[n]; // discrepancy
@@ -341,13 +441,13 @@ struct rs_decode {
     }
 
     static inline void forney(
-            const uint8_t synds[RS::ecc], uint8_t err_poly[], const uint8_t err_pos[],
-            const unsigned err_count, uint8_t err_mag[])
+            const GFT synds[RS::ecc], GFT err_poly[], const GFT err_pos[],
+            const unsigned err_count, GFT err_mag[])
     {
-        uint8_t temp[RS::ecc] = {1};
+        GFT temp[RS::ecc] = {1};
 
-        uint8_t err_eval[RS::ecc * 2];
-        uint8_t synds_rev[RS::ecc];
+        GFT err_eval[RS::ecc * 2];
+        typename RS::synds_array_t synds_rev;
         std::reverse_copy(synds, &synds[RS::ecc], synds_rev);
 
         auto err_eval_size = RS::GF::poly_mul(
