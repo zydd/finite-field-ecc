@@ -76,7 +76,7 @@ void benchmark_enc_257() {
 
     uint16_t buffer[msglen + ecclen];
 
-    using GF = ::GF<uint16_t, 257, 1, 2, 0, gf_add_ring, gf_mul_cpu, gf_exp_log_lut>;
+    using GF = ::GF<uint16_t, 257, 1, 3, 0, gf_add_ring, gf_mul_cpu, gf_exp_log_lut>;
     using RS = ::RS<GF, ecclen, rs_encode_basic, rs_synds_basic, rs_roots_eval_basic, rs_decode>;
 
     std::cout << "sizeof(RS<" << ecclen << ">) = " << sizeof(RS) << std::endl;

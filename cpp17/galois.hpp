@@ -232,13 +232,13 @@ struct gf_poly {
             return 0;
 
         for (unsigned i = 0; i < size_a - size_b + 1; ++i) {
-            T coef = a[i];// = div(a[i], normalizer);
+            T c = a[i];// = div(a[i], normalizer);
 
-            if (coef == 0)
+            if (c == 0)
                 continue;
 
             for (unsigned j = 1; j < size_b; ++j)
-                a[i + j] = GF::sub(a[i + j], GF::mul(b[j], coef));
+                a[i + j] = GF::sub(a[i + j], GF::mul(b[j], c));
         }
 
         return size_a - size_b + 1;

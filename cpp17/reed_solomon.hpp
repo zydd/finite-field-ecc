@@ -99,7 +99,7 @@ struct rs_generator {
             p2[0] = 1;
 
             for (unsigned i = 0; i < RS::ecc; ++i) {
-                typename RS::GF::Repr factor[] = {1, RS::GF::exp(i)};
+                typename RS::GF::Repr factor[] = {1, RS::GF::sub(0, RS::GF::exp(i))};
                 len = RS::GF::poly_mul(p1, p2, len, factor, 2);
 
                 auto t = p1;
@@ -109,7 +109,7 @@ struct rs_generator {
         }
     } sdata{};
 };
-
+#include <cstdio>
 template<typename RS>
 struct rs_encode_basic {
     static constexpr auto& generator = rs_generator<RS>::sdata.generator;
@@ -117,6 +117,11 @@ struct rs_encode_basic {
     template<typename S, typename T>
     static inline void encode(S output, T const& input, unsigned input_size) {
         RS::GF::poly_mod_x_n(output, input, input_size, &generator[1], RS::ecc);
+
+        if constexpr (RS::GF::prime != 2) {
+            for (unsigned i = 0; i < RS::ecc; ++i)
+                output[i] = RS::GF::sub(0, output[i]);
+        }
     }
 };
 
