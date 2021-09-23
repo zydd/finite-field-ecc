@@ -60,11 +60,11 @@ uint32_t gf_poly_eval4(void *rs, uint8_t a[], unsigned size_a, const uint32_t x)
 }
 
 void encode(void *rs, uint8_t a[], unsigned size) {
-    return reinterpret_cast<RS0 *>(rs)->encode(a, size);
+    reinterpret_cast<RS0 *>(rs)->encode(a + size - RS0::ecc, a, size - RS0::ecc);
 }
 
 void decode(void *rs, uint8_t a[], unsigned size) {
-    return reinterpret_cast<RS0 *>(rs)->decode(a, size);
+    reinterpret_cast<RS0 *>(rs)->decode(a, size);
 }
 
 }

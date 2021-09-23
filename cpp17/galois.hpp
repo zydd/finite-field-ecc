@@ -35,9 +35,8 @@ struct gf_base {
 
 
 template<typename GF>
-struct gf_add_mul_ring {
+struct gf_add_ring {
     using T = typename GF::Repr;
-    static inline constexpr T mul(T const& lhs, T const& rhs) { return (lhs * rhs) % GF::prime; }
     static inline constexpr T add(T const& lhs, T const& rhs) { return (lhs + rhs) % GF::prime; }
     static inline constexpr T sub(T const& lhs, T const& rhs) {
         if (lhs >= rhs) 
@@ -50,15 +49,16 @@ struct gf_add_mul_ring {
 
 template<typename GF>
 struct gf_add_xor {
-    using T = typename GF::Repr;
-    static inline constexpr T add(T const& lhs, T const& rhs) { return lhs ^ rhs; }
-    static inline constexpr T sub(T const& lhs, T const& rhs) { return lhs ^ rhs; }
+    using GFT = typename GF::Repr;
+    static inline constexpr GFT add(GFT const& lhs, GFT const& rhs) { return lhs ^ rhs; }
+    static inline constexpr GFT sub(GFT const& lhs, GFT const& rhs) { return lhs ^ rhs; }
 };
 
 template<typename GF>
 struct gf_mul_cpu {
     using GFT = typename GF::Repr;
 
+    template<typename T = GF, std::enable_if_t<T::prime == 2, bool> = true>
     static inline constexpr GFT mul(GFT const& a, GFT const& b) {
         GFT r = 0;
         
@@ -75,6 +75,9 @@ struct gf_mul_cpu {
 
         return r;
     }
+
+    template<typename T = GF, std::enable_if_t<T::power == 1, bool> = true>
+    static inline constexpr GFT mul(GFT const& lhs, GFT const& rhs) { return (lhs * rhs) % GF::prime; }
 };
 
 template<typename GF>
@@ -291,7 +294,7 @@ struct gf_poly {
                 //         [c](T a, T b) { return GF::sub(a, GF::mul(b, c)); });
             }
         } else {
-            std::memset(rem, 0, size_b - size_a);
+            std::fill_n(rem, size_b - size_a, 0);
             std::copy_n(a, size_a, &rem[size_b - size_a]);
         }
 

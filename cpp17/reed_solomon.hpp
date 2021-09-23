@@ -115,9 +115,8 @@ struct rs_encode_basic {
     static constexpr auto& generator = rs_generator<RS>::sdata.generator;
 
     template<typename S, typename T>
-    static inline void encode(S output, T const& input, unsigned size) {
-        auto data_len = size - RS::ecc;
-        RS::GF::poly_mod_x_n(output, input, data_len, &generator[1], RS::ecc);
+    static inline void encode(S output, T const& input, unsigned input_size) {
+        RS::GF::poly_mod_x_n(output, input, input_size, &generator[1], RS::ecc);
     }
 };
 
@@ -176,10 +175,10 @@ struct rs_encode_lut_t<uint8_t> {
         static constexpr auto& generator = rs_generator<RS>::sdata.generator;
 
         static inline constexpr struct sdata_t {
-            std::array<std::array<uint8_t, RS::ecc>, 256> generator_lut{};
+            std::array<std::array<uint8_t, RS::ecc>, RS::GF::charact> generator_lut{};
 
             constexpr inline sdata_t() {
-                for (unsigned i = 0; i < 256; ++i) {
+                for (unsigned i = 0; i < RS::GF::charact; ++i) {
                     uint8_t data[RS::ecc + 1] = {uint8_t(i)};
                     RS::GF::ex_synth_div(&data[0], RS::ecc + 1, &generator[0], RS::ecc + 1);
 
@@ -303,8 +302,10 @@ struct rs_roots_eval_chien {
         for (int i = 254; i >= 0; --i) {
             uint8_t sum = 1;
 
-            for (unsigned j = 1; j < poly_size; ++j)
-                sum ^= coefs[j] = RS::GF::mul(coefs[j], RS::GF::exp(j));
+            for (unsigned j = 1; j < poly_size; ++j) {
+                coefs[j] = RS::GF::mul(coefs[j], RS::GF::exp(j));
+                sum = RS::GF::add(sum, coefs[j]);
+            }
 
             if (sum == 0) {
                 roots[count] = i;
@@ -370,24 +371,34 @@ struct rs_decode {
     using GFT = typename RS::GF::Repr;
 
     template<typename T>
-    static inline void decode(T& data, unsigned size) {
+    static inline bool decode(T& data, unsigned size) {
         typename RS::synds_array_t synds;
         RS::synds(data, size, synds);
 
         if (std::all_of(&synds[0], &synds[RS::ecc], std::logical_not()))
-            return;
+            return true;
 
         GFT err_poly[RS::ecc];
         auto errors = berlekamp_massey(synds, err_poly);
 
         GFT err_pos[RS::ecc / 2];
-        RS::roots(&err_poly[RS::ecc-errors-1], errors+1, err_pos, size);
+        auto roots = RS::roots(&err_poly[RS::ecc-errors-1], errors+1, err_pos, size);
+
+        if (errors != roots)
+            return false;
 
         GFT err_mag[RS::ecc / 2];
         forney(synds, &err_poly[RS::ecc-errors-1], err_pos, errors, err_mag);
 
-        for (unsigned i = 0; i < errors; ++i)
-            data[size - 1 - err_pos[i]] ^= err_mag[i];
+        for (unsigned i = 0; i < errors; ++i) {
+            unsigned pos = size - 1 - err_pos[i];
+            if (pos >= size)
+                return false;
+
+            data[pos] = RS::GF::sub(data[pos], err_mag[i]);
+        }
+
+        return true;
     }
 
     static inline unsigned berlekamp_massey(const GFT synds[RS::ecc], GFT err_poly[RS::ecc]) {
@@ -408,7 +419,7 @@ struct rs_decode {
         for (unsigned n = 0; n < RS::ecc; ++n) {
             unsigned d = synds[n]; // discrepancy
             for (unsigned i = 1; i < errors + 1; ++i)
-                d ^= RS::GF::mul(err_poly[RS::ecc - 1 - i], synds[n-i]);
+                d = RS::GF::sub(d, RS::GF::mul(err_poly[RS::ecc - 1 - i], synds[n-i]));
 
             if (d == 0) {  // discrepancy is already zero
                 m = m + 1;

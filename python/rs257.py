@@ -138,11 +138,11 @@ if __name__ == '__main__':
 
     # gf.run_tests()
 
-    message = [(random.randrange(0, 256)*0 + _) % GF.p ** GF.k for _ in range(msg_len)]
+    message = [(random.randrange(0, 256)*0 + 5) % GF.p ** GF.k for _ in range(msg_len)]
     print(f'message: {message}')
 
     generator = rs_generator(ecc_len)
-    # print(f'generator:', generator)
+    print(f'generator:', list(map(int, generator.x)))
 
     msg_enc = rs_encode_systematic(message[::-1], generator)
     assert any(map(int, rs_syndromes(msg_enc, ecc_len))) == False
