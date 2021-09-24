@@ -109,7 +109,7 @@ struct rs_generator {
         }
     } sdata{};
 };
-#include <cstdio>
+
 template<typename RS>
 struct rs_encode_basic {
     static constexpr auto& generator = rs_generator<RS>::sdata.generator;
@@ -151,24 +151,20 @@ struct rs_encode_lut_t {
             }
         } sdata{};
 
-        static inline void encode(uint8_t *data, unsigned size) {
-            auto data_len = size - RS::ecc;
-            auto rem = &data[data_len];
-
+        static inline void encode(uint8_t *output, const uint8_t *data, unsigned size) {
             static_assert(RS::ecc == sizeof(Word));
 
             const auto shift = (sizeof(Word) - 1) * 8;
 
             Word w = 0;
-            for (unsigned i = 0; i < data_len; ++i) {
+            for (unsigned i = 0; i < size; ++i) {
                 auto pos = (w >> shift) ^ data[i];
-
                 w = (w << 8) ^ sdata.generator_lut.word[pos];
             }
 
-            // std::copy_n(reinterpret_cast<const uint8_t *>(&w), RS::ecc, rem);
+            // std::copy_n(reinterpret_cast<const uint8_t *>(&w), RS::ecc, output);
             for (unsigned i = 0; i < RS::ecc; ++i)
-                rem[i] = w >> (shift - 8 * i);
+                output[i] = w >> (shift - 8 * i);
         }
     };
 };
@@ -193,24 +189,22 @@ struct rs_encode_lut_t<uint8_t> {
             }
         } sdata{};
 
-        static inline void encode(uint8_t *data, unsigned size) {
-            auto data_len = size - RS::ecc;
-            auto rem = &data[data_len];
-            std::memset(rem, 0, RS::ecc);
-            for (unsigned i = 0; i < data_len; ++i) {
-                uint8_t pos = rem[0] ^ data[i];
-                rem[0] = 0;
-                std::rotate(rem, rem + 1, rem + RS::ecc);
-                std::transform(rem, rem + RS::ecc,
+        static inline void encode(uint8_t *output, const uint8_t *data, unsigned size) {
+            std::memset(output, 0, RS::ecc);
+            for (unsigned i = 0; i < size; ++i) {
+                uint8_t pos = output[0] ^ data[i];
+                output[0] = 0;
+                std::rotate(output, output + 1, output + RS::ecc);
+                std::transform(output, output + RS::ecc,
                         &sdata.generator_lut[pos][0],
-                        rem, std::bit_xor<uint8_t>());
+                        output, std::bit_xor());
             }
         }
     };
 };
 
 template<typename RS>
-using rs_encode_lut = rs_encode_lut_t<uint8_t>::type<RS>;
+using rs_encode_lut1 = rs_encode_lut_t<uint8_t>::type<RS>;
 template<typename RS>
 using rs_encode_lut4 = rs_encode_lut_t<uint32_t>::type<RS>;
 template<typename RS>
@@ -400,7 +394,7 @@ struct rs_decode {
             if (pos >= size)
                 return false;
 
-            data[pos] = RS::GF::sub(data[pos], err_mag[i]);
+            data[pos] = RS::GF::add(data[pos], err_mag[i]);
         }
 
         return true;
@@ -424,7 +418,7 @@ struct rs_decode {
         for (unsigned n = 0; n < RS::ecc; ++n) {
             unsigned d = synds[n]; // discrepancy
             for (unsigned i = 1; i < errors + 1; ++i)
-                d = RS::GF::sub(d, RS::GF::mul(err_poly[RS::ecc - 1 - i], synds[n-i]));
+                d = RS::GF::add(d, RS::GF::mul(err_poly[RS::ecc - 1 - i], synds[n-i]));
 
             if (d == 0) {  // discrepancy is already zero
                 m = m + 1;
@@ -434,7 +428,7 @@ struct rs_decode {
                 RS::GF::poly_shift(prev, RS::ecc, m);
                 RS::GF::poly_scale(prev, RS::ecc, RS::GF::div(d, b));
 
-                RS::GF::poly_add(err_poly, prev, RS::ecc);
+                RS::GF::poly_sub(err_poly, prev, RS::ecc);
 
                 errors = n + 1 - errors;
                 std::copy_n(temp, RS::ecc, prev);
@@ -447,7 +441,7 @@ struct rs_decode {
                 RS::GF::poly_shift(temp, RS::ecc, m);
 
                 RS::GF::poly_scale(temp, RS::ecc, RS::GF::div(d, b));
-                RS::GF::poly_add(err_poly, temp, RS::ecc);
+                RS::GF::poly_sub(err_poly, temp, RS::ecc);
 
                 m = m + 1;
             }
@@ -473,21 +467,22 @@ struct rs_decode {
         auto err_eval_begin = RS::GF::ex_synth_div(
                 err_eval, err_eval_size,
                 temp, RS::ecc);
-
         while (err_eval[err_eval_begin] == 0) {
             err_eval_begin++;
             assert(err_eval_begin < err_eval_size);
         }
         err_eval_size = err_eval_size - err_eval_begin;
 
-        auto err_poly_deriv_size = RS::GF::poly_deriv(err_poly, err_count + 1);
+        RS::GF::poly_deriv(err_poly, err_count + 1);
+        auto err_poly_deriv = err_poly + 1;
+        auto err_poly_deriv_size = err_count;
 
         for (unsigned i = 0; i < err_count; ++i) {
             auto xi = RS::GF::exp(err_pos[i]);
             auto xi_inv = RS::GF::inv(xi);
 
             auto n = RS::GF::poly_eval(&err_eval[err_eval_begin], err_eval_size, xi_inv);
-            auto d = RS::GF::poly_eval(err_poly, err_poly_deriv_size, xi_inv);
+            auto d = RS::GF::poly_eval(err_poly_deriv, err_poly_deriv_size, xi_inv);
 
             err_mag[i] = RS::GF::mul(xi, RS::GF::div(n, d));
         }

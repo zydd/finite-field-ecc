@@ -128,6 +128,11 @@ class RSC:
         self.c_lib.encode257(self.gf_ctx, res, len(a))
         return list(res)
 
+    def decode257(self, a):
+        res = (ctypes.c_uint16 * len(a))(*a)
+        self.c_lib.decode257(self.gf_ctx, res, len(a))
+        return list(res)
+
 if os.system('g++ -O3 -std=c++17 -Wall -shared -fPIC ./lib.cpp -o lib.so') != 0:
     quit()
 
@@ -152,21 +157,18 @@ def test_mul():
     for a in range(GF.p ** GF.k):
         for b in range(GF.p ** GF.k):
             assert_eq(a, b, int(GF(a) * GF(b)), RS._mul(a, b))
-        print(f'{a}/255    ', end='\r')
 
 @test
 def test_gf_mul():
     for a in range(GF.p ** GF.k):
         for b in range(GF.p ** GF.k):
             assert_eq(a, b, int(GF(a) * GF(b)), RS.gf_mul(a, b))
-        print(f'{a}/255    ', end='\r')
 
 @test
 def test_gf257_mul():
     for a in range(GF257.p):
         for b in range(GF257.p):
             assert_eq(a, b, int(GF257(a) * GF257(b)), RS.gf257_mul(a, b))
-        print(f'{a}/255    ', end='\r')
 
 @test
 def test_gf257_exp_log():
@@ -183,7 +185,6 @@ def test_gf257_exp_log():
     for a in range(GF257.p):
         assert_eq(a, None, exp[int(GF257(a))], RS.gf257_exp(a))
         assert_eq(a, None, log[int(GF257(a))], RS.gf257_log(a))
-        print(f'{a}/256    ', end='\r')
 
 @test
 def test_gf_mul4():
@@ -197,7 +198,6 @@ def test_gf_mul4():
 
             # assert_eq(a, b, ref, RS.gf_mul4(a, d))
             assert_eq(a, b, int(GF(a) * GF(b)), RS.gf_mul4(a, b))
-        print(f'{a}/255    ', end='\r')
 
 @test
 def test_gf_inv():
@@ -209,7 +209,6 @@ def test_gf_div():
     for a in range(GF.p ** GF.k):
         for b in range(1, GF.p ** GF.k):
             assert_eq(a, b, int(GF(a) // GF(b)), RS.gf_div(a, b))
-        print(f'{a}/255    ', end='\r')
 
 @test
 def test_gf_mul16():
@@ -217,8 +216,6 @@ def test_gf_mul16():
         a = random.randrange(GF64k.p ** GF64k.k)
         b = random.randrange(GF64k.p ** GF64k.k)
         assert_eq(a, b, int(GF64k(a) * GF64k(b)), RS.gf_mul16(a, b))
-        if i & 0xff == 0:
-            print(f'{i}/100000    ', end='\r')
 
 @test
 def test_ex_synth_div():
@@ -239,7 +236,6 @@ def test_ex_synth_div():
                 print(f'gf: {gfqr}')
                 print(f'rs: {rsqr}')
                 assert False
-        print(f'{len_a}/31    ', end='\r')
 
 @test
 def test_gf257_ex_synth_div():
@@ -260,7 +256,6 @@ def test_gf257_ex_synth_div():
                 print(f'gf: {gfqr}')
                 print(f'rs: {rsqr}')
                 assert False
-        print(f'{len_a}/31    ', end='\r')
 
 @test
 def test_poly_mod():
@@ -276,7 +271,6 @@ def test_poly_mod():
 
             assert ex[1] == mod, (ex[1], mod)
 
-        print(f'{len_a}/99    ', end='\r')
 
 @test
 def test_poly_eval():
@@ -287,7 +281,6 @@ def test_poly_eval():
             gfpoly = gf.P(GF, reversed(a))
 
             assert int(gfpoly.eval(GF(x))) == RS.poly_eval(a, x)
-        print(f'{i}/31    ', end='\r')
 
 @test
 def test_poly_eval4():
@@ -326,7 +319,7 @@ def test_gf257_poly_mul():
 def test_encode():
     gen = rs.rs_generator(ecc_len)
     for _ in range(10):
-        a = [random.randrange(GF.p ** GF.k) for _ in range(2)]
+        a = [random.randrange(GF.p ** GF.k) for _ in range(16)]
 
         enc = RS.encode(a + [0] * ecc_len)
 
@@ -341,26 +334,22 @@ def test_encode():
 @test
 def test_encode257():
     gen = rs257.rs_generator(ecc_len)
-    for _ in range(10):
-        a = [random.randrange(GF257.p) for _ in range(12)]
+    for _ in range(10000):
+        a = [random.randrange(GF257.p) for _ in range(16)]
 
         enc = RS.encode257(a + [0] * ecc_len)
-        enc2 = RS.gf257_ex_synth_div(a + [0] * ecc_len, gen[::-1])
-
-        ref = rs257.rs_encode_systematic(a[::-1], gen)
-        ref = [0] * (len(enc) - len(ref.x)) + list(map(int, ref[::-1]))
+        ref = rs257.rs_encode_systematic(a, gen)
 
         if enc != ref:
             print(f'gen: {list(map(int, gen))}')
             print(f'enc: {enc}')
-            print(f'enc2: {enc2}')
             print(f'ref: {ref}')
             assert False
 
 @test
 def test_decode():
     for _ in range(10000):
-        a = [random.randrange(GF.p ** GF.k) for _ in range(12)]
+        a = [random.randrange(GF.p ** GF.k) for _ in range(16)]
 
         enc = RS.encode(a + [0] * ecc_len)
 
@@ -383,9 +372,31 @@ def test_decode():
             print(f'ref:  {ref}')
             assert False
 
+@test
+def test_decode257():
+    for _ in range(10000):
+        a = [random.randrange(GF257.p) for _ in range(16)]
+
+        enc = RS.encode257(a + [0] * ecc_len)
+
+        for i in range(ecc_len//2):
+            e1 = random.randrange(len(enc))
+            enc[e1] = int(GF257(enc[e1]) + GF257(random.randrange(1, GF257.p - 1)))
+
+        dec = RS.decode257(enc)
+
+        # assert ref[:len(a)] == a, (ref[:len(a)], a)
+        if dec[:len(a)] != a:
+            ref = rs257.decode(enc, ecc_len)
+            print(f'data: {a}')
+            print(f'enc:  {enc}')
+            print(f'dec:  {dec}')
+            print(f'ref:  {ref}')
+            assert False
+
 if __name__ == '__main__':
     random.seed(42)
-    # test_mul()
+    test_mul()
     test_gf_mul()
     test_gf_mul4()
     test_gf_mul16()
@@ -403,3 +414,4 @@ if __name__ == '__main__':
     test_encode()
     test_decode()
     test_encode257()
+    test_decode257()

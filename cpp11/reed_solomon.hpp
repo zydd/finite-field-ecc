@@ -86,7 +86,7 @@ struct RS {
 
                 w = (w << 8) ^ lut[pos];
             }
-        
+
             // std::copy_n(reinterpret_cast<const uint8_t *>(&w), ecc, rem);
             for (unsigned i = 0; i < ecc; ++i)
                 rem[i] = w >> (shift - 8 * i);

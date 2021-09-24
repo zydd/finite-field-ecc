@@ -39,7 +39,7 @@ struct gf_add_ring {
     using T = typename GF::Repr;
     static inline constexpr T add(T const& lhs, T const& rhs) { return (lhs + rhs) % GF::prime; }
     static inline constexpr T sub(T const& lhs, T const& rhs) {
-        if (lhs >= rhs) 
+        if (lhs >= rhs)
             return (lhs - rhs) % GF::prime;
         else
             return ((GF::charact - rhs) + lhs) % GF::prime;
@@ -61,7 +61,7 @@ struct gf_mul_cpu {
     template<typename T = GF, std::enable_if_t<T::prime == 2, bool> = true>
     static inline constexpr GFT mul(GFT const& a, GFT const& b) {
         GFT r = 0;
-        
+
         constexpr auto iter = detail::ilog2_floor(GF::charact >> 1);
         for (int i = iter; i >= 0; --i) {
             if (r & (GF::charact >> 1))
@@ -340,6 +340,12 @@ struct gf_poly {
             poly_a[i] = GF::add(poly_a[i], poly_b[i]);
     }
 
+    template<typename T>
+    static inline constexpr void poly_sub(T poly_a[], const T poly_b[], const unsigned size) {
+        for (unsigned i = 0; i < size; ++i)
+            poly_a[i] = GF::sub(poly_a[i], poly_b[i]);
+    }
+
     template<typename T, typename U>
     static inline constexpr unsigned poly_mul(GFT r[],
             T poly_a[], const unsigned size_a,
@@ -356,19 +362,20 @@ struct gf_poly {
         return res_len;
     }
 
-    template<typename T>
+    template<typename T, typename _GF = GF, std::enable_if_t<_GF::prime == 2, bool> = true>
     static inline constexpr unsigned poly_deriv(T poly[], unsigned size) {
-        if (size & 1) {
-            for (unsigned i = 0; i < size - 1; ++i)
-                poly[i] = (i & 1) ? 0 : poly[i + 1];
+        for (unsigned i = 1; i < size; ++i)
+            poly[size - i] = (i & 1) ? poly[size - i - 1] : 0;
 
-            return size - 2;
-        } else {
-            for (unsigned i = 1; i < size - 1; i += 2)
-                poly[i] = 0;
+        return size - 1;
+    }
 
-            return size - 1;
-        }
+    template<typename T, typename _GF = GF, std::enable_if_t<_GF::power == 1, bool> = true>
+    static inline constexpr unsigned poly_deriv(T poly[], unsigned size) {
+        for (unsigned i = 1; i < size; ++i)
+            poly[size - i] = GF::mul(poly[size - i - 1], i);
+        poly[0] = 0;
+        return size - 1;
     }
 };
 

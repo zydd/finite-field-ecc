@@ -99,4 +99,8 @@ void decode(void *rs, uint8_t a[], unsigned size) {
     reinterpret_cast<context *>(rs)->rs0.decode(a, size);
 }
 
+void decode257(void *rs, uint16_t a[], unsigned size) {
+    reinterpret_cast<context *>(rs)->rs1.decode(a, size);
+}
+
 }

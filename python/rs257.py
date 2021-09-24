@@ -8,8 +8,6 @@ from gf import P, F, PrimeField
 import bch
 
 GF = PrimeField(257, next(PrimeField.primitives(257)))
-print(GF)
-
 
 def rs_generator(n):
     g = P(GF, [1])
@@ -23,11 +21,12 @@ def rs_encode(msg, genertor):
     return poly #// P(GF, [poly.x[-1]])
 
 def rs_encode_systematic(msg, generator):
-    poly = P(GF, [0] * generator.deg() + msg)
+    poly = P(GF, [0] * generator.deg() + msg[::-1])
+    enc = poly - (poly % generator)
+    return [0] * (len(msg) + generator.deg() - len(enc.x)) + list(map(int, enc[::-1]))
 
-    return poly - (poly % generator)
-
-def rs_syndromes(poly, n):
+def rs_syndromes(msg, n):
+    poly = P(GF, msg[::-1])
     return [poly.eval(GF.gen(i)) for i in range(n)]
 
 def berlekamp_massey(s):
@@ -111,49 +110,7 @@ def forney(synds, err_poly, err_pos):
 # gf.run_tests()
 
 def decode(msg, ecc_len):
-    msg_enc = gf.P(GF, msg[::-1])
-    synds = rs_syndromes(msg_enc, ecc_len)
-    # print(f'synds: {list(map(int, synds))}')
-    err_poly = berlekamp_massey(synds)
-    # print(f'err_poly: {err_poly}')
-    err_pos = []
-    for i in range(len(msg)):
-        if int(err_poly.eval(GF.gen(i).inv())) == 0:
-            err_pos.append(i)
-    print(f'err_pos: {err_pos}')
-    err_mag = bch.forney(synds, err_poly, err_pos)
-
-    # print(f'err_mag: {list(map(int, list(zip(*err_mag))[1]))}')
-    msg_enc.x += [GF(0)] * (len(msg) - len(msg_enc.x))
-    for pos, mag in err_mag:
-        msg_enc.x[pos] += mag
-
-    return list(map(int, msg_enc[::-1]))
-
-if __name__ == '__main__':
-    # random.seed(42)
-
-    ecc_len = 4
-    msg_len = 16
-
-    # gf.run_tests()
-
-    message = [(random.randrange(0, 256)*0 + 5) % GF.p ** GF.k for _ in range(msg_len)]
-    print(f'message: {message}')
-
-    generator = rs_generator(ecc_len)
-    print(f'generator:', list(map(int, generator.x)))
-
-    msg_enc = rs_encode_systematic(message[::-1], generator)
-    assert any(map(int, rs_syndromes(msg_enc, ecc_len))) == False
-
-    for i in range(ecc_len // 2):
-        e_i = random.randrange(0, len(msg_enc.x))
-        # e_i = i
-        e = msg_enc.N(random.randrange(0, GF.p ** GF.k))
-        msg_enc.x[e_i] += e
-        print(f'error: {(e_i, int(e))}')
-
+    msg_enc = list(msg)
     synds = rs_syndromes(msg_enc, ecc_len)
     print(f'syndromes: {list(map(int, synds))}')
 
@@ -161,7 +118,7 @@ if __name__ == '__main__':
     # print(f'err_poly: {err_poly}')
 
     err_pos = []
-    for i in range(msg_len + ecc_len):
+    for i in range(len(msg)):
         if int(err_poly.eval(GF.gen(i).inv())) == 0:
             err_pos.append(i)
 
@@ -171,18 +128,47 @@ if __name__ == '__main__':
 
     # errors1 = forney(synds, err_poly, err_pos)
     errors = forney(synds, err_poly, err_pos)
-    print('errors', list(map(lambda p: (p[0], int(p[1])), errors)))
+    print('errors', list(map(lambda p: (len(msg) - 1 - p[0], int(p[1])), errors)))
 
-    msg_enc.x += [0] * (msg_len + ecc_len - len(msg_enc.x))
-    print(f'msg_enc: {list(map(int, msg_enc[::-1]))}')
+    print(f'msg_enc: {msg_enc}')
 
     for pos, mag in errors:
-       msg_enc.x[pos] -= mag
+        msg_enc[-1-pos] = int(GF(msg_enc[-1-pos]) - mag)
 
-    msg_dec = list(map(int, msg_enc[::-1]))
+    return msg_enc
 
-    # print(f'message: {message}')
+if __name__ == '__main__':
+    random.seed(42)
 
-    print(f'msg_dec: {msg_dec[:msg_len + ecc_len]}')
+    ecc_len = 4
+    msg_len = 16
 
-    print(message == msg_dec[:msg_len])
+    # gf.run_tests()
+
+    for _ in range(1000):
+        message = [random.randrange(0, GF.p ** GF.k) for _ in range(msg_len)]
+        print(f'message: {message}')
+
+        generator = rs_generator(ecc_len)
+        print(f'generator:', list(map(int, generator.x)))
+
+        msg_enc = rs_encode_systematic(message, generator)
+        assert len(msg_enc) == msg_len + ecc_len
+
+        print(f'msg_enc: {msg_enc}')
+        assert any(map(int, rs_syndromes(msg_enc, ecc_len))) == False
+
+        for i in range(ecc_len // 2):
+            e_i = random.randrange(0, len(msg_enc))
+            e = random.randrange(0, GF.p ** GF.k)
+            msg_enc[e_i] = int(GF(msg_enc[e_i]) + GF(e))
+            print(f'error: {(e_i, e)}')
+
+        msg_dec = decode(msg_enc, ecc_len)
+        assert len(msg_dec) == msg_len + ecc_len
+
+        # print(f'message: {message}')
+
+        print(f'msg_dec: {msg_dec}')
+
+        assert message == msg_dec[:msg_len]

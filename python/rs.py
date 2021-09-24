@@ -117,7 +117,7 @@ def decode(msg, ecc_len):
         if int(err_poly.eval(GF.gen(i).inv())) == 0:
             err_pos.append(i)
     print(f'err_pos: {err_pos}')
-    err_mag = bch.forney(synds, err_poly, err_pos)
+    err_mag = forney(synds, err_poly, err_pos)
 
     # print(f'err_mag: {list(map(int, list(zip(*err_mag))[1]))}')
     msg_enc.x += [GF(0)] * (len(msg) - len(msg_enc.x))
