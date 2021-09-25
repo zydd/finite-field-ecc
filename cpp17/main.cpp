@@ -19,12 +19,12 @@ void benchmark_enc_dec() {
     std::cout << "benchmark_enc_dec" << std::endl;
 
     const unsigned ecclen = 8;
-    const unsigned msglen = 40-ecclen;
+    const unsigned msglen = 255-ecclen;
 
     uint8_t buffer[msglen + ecclen];
 
     using GF = ::GF<uint8_t, 2, 8, 2, 0x11d & 0xff, gf_add_xor, gf_exp_log_lut, gf_mul_exp_log_lut>;
-    using RS = ::RS<GF, ecclen, rs_encode_lut8, rs_synds_basic, rs_roots_eval_basic, rs_decode>;
+    using RS = ::RS<GF, ecclen, rs_encode_slice<uint64_t, 8>::type, rs_synds_basic, rs_roots_eval_basic, rs_decode>;
 
     std::cout << "sizeof(RS<" << ecclen << ">) = " << sizeof(RS) << std::endl;
     std::cout << "GF::static_data_size: " << GF::static_data_size << std::endl;
@@ -72,7 +72,7 @@ void benchmark_enc_257() {
     std::cout << "benchmark_enc_257" << std::endl;
 
     const unsigned ecclen = 8;
-    const unsigned msglen = 40-ecclen;
+    const unsigned msglen = 256-ecclen;
 
     uint16_t buffer[msglen + ecclen];
 

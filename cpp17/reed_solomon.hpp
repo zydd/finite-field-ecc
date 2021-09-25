@@ -87,10 +87,12 @@ struct rs_base {
 template<typename RS>
 struct rs_generator {
     static inline constexpr struct sdata_t {
-        std::array<typename RS::GF::Repr, RS::ecc + 1> generator{};
+        using GFT = typename RS::GF::Repr;
+
+        GFT generator[RS::ecc + 1] = {};
 
         inline constexpr sdata_t() {
-            std::array<typename RS::GF::Repr, RS::ecc + 1> temp{};
+            GFT temp[RS::ecc + 1] = {};
 
             auto p1 = (RS::ecc & 1) ? &generator[0] : &temp[0];
             auto p2 = (RS::ecc & 1) ? &temp[0] : &generator[0];
@@ -99,7 +101,7 @@ struct rs_generator {
             p2[0] = 1;
 
             for (unsigned i = 0; i < RS::ecc; ++i) {
-                typename RS::GF::Repr factor[] = {1, RS::GF::sub(0, RS::GF::exp(i))};
+                GFT factor[] = {1, RS::GF::sub(0, RS::GF::exp(i))};
                 len = RS::GF::poly_mul(p1, p2, len, factor, 2);
 
                 auto t = p1;
@@ -125,92 +127,108 @@ struct rs_encode_basic {
     }
 };
 
-template<typename Word>
-struct rs_encode_lut_t {
+template<typename RS>
+struct rs_encode_lut {
+    static constexpr auto& generator = rs_generator<RS>::sdata.generator;
+
+    static inline constexpr struct sdata_t {
+        std::array<std::array<uint8_t, RS::ecc>, RS::GF::charact> generator_lut{};
+
+        constexpr inline sdata_t() {
+            for (unsigned i = 0; i < RS::GF::charact; ++i) {
+                uint8_t data[RS::ecc + 1] = {0};
+                data[0] = uint8_t(i);
+                RS::GF::ex_synth_div(&data[0], RS::ecc + 1, &generator[0], RS::ecc + 1);
+
+                for (unsigned j = 0; j < RS::ecc; ++j)
+                    generator_lut[i][j] = data[j + 1];
+            }
+        }
+    } sdata{};
+
+    static inline void encode(uint8_t *output, const uint8_t *data, unsigned size) {
+        std::memset(output, 0, RS::ecc);
+        for (unsigned i = 0; i < size; ++i) {
+            uint8_t pos = output[0] ^ data[i];
+            output[0] = 0;
+            std::rotate(output, output + 1, output + RS::ecc);
+            std::transform(output, output + RS::ecc,
+                    &sdata.generator_lut[pos][0],
+                    output, std::bit_xor());
+        }
+    }
+};
+
+template<typename Word, unsigned N>
+struct rs_encode_slice {
     template<typename RS>
     struct type {
-        static constexpr auto ecc_w = (RS::ecc / sizeof(Word)) + !!(RS::ecc % sizeof(Word));
+        using GFT = typename RS::GF::Repr;
+        static_assert(RS::ecc == sizeof(Word));
+        static_assert(RS::GF::prime == 2);
+
         static constexpr auto& generator = rs_generator<RS>::sdata.generator;
 
         static inline constexpr struct sdata_t {
-            union {
-                std::array<std::array<uint8_t, sizeof(Word)>, RS::GF::charact> u8;
-                std::array<Word, RS::GF::charact> word;
-            } generator_lut{};
+            Word generator_lut[N][RS::GF::charact] = {};
 
             inline constexpr sdata_t() {
                 for (unsigned i = 0; i < RS::GF::charact; ++i) {
-                    uint8_t data[RS::ecc + 1] = {uint8_t(i)};
+                    uint8_t data[RS::ecc + 1] = {0};
+                    data[0] = uint8_t(i);
                     RS::GF::ex_synth_div(&data[0], RS::ecc + 1, &generator[0], RS::ecc + 1);
 
-                    static_assert(RS::ecc == sizeof(Word));
+                    Word rem = 0;
 
+                    // endianess dependent
                     for (unsigned j = 0; j < RS::ecc; ++j)
-                        generator_lut.u8[i][RS::ecc - 1 - j] = data[j + 1]; // little endian
+                        rem = (rem << 8) | data[RS::ecc - j];
+                        // rem = (rem << 8) | data[j + 1];
+
+                    generator_lut[0][i] = rem;
                 }
-            }
-        } sdata{};
 
-        static inline void encode(uint8_t *output, const uint8_t *data, unsigned size) {
-            static_assert(RS::ecc == sizeof(Word));
-
-            const auto shift = (sizeof(Word) - 1) * 8;
-
-            Word w = 0;
-            for (unsigned i = 0; i < size; ++i) {
-                auto pos = (w >> shift) ^ data[i];
-                w = (w << 8) ^ sdata.generator_lut.word[pos];
-            }
-
-            // std::copy_n(reinterpret_cast<const uint8_t *>(&w), RS::ecc, output);
-            for (unsigned i = 0; i < RS::ecc; ++i)
-                output[i] = w >> (shift - 8 * i);
-        }
-    };
-};
-
-template<>
-struct rs_encode_lut_t<uint8_t> {
-    template<typename RS>
-    struct type {
-        static constexpr auto& generator = rs_generator<RS>::sdata.generator;
-
-        static inline constexpr struct sdata_t {
-            std::array<std::array<uint8_t, RS::ecc>, RS::GF::charact> generator_lut{};
-
-            constexpr inline sdata_t() {
                 for (unsigned i = 0; i < RS::GF::charact; ++i) {
-                    uint8_t data[RS::ecc + 1] = {uint8_t(i)};
-                    RS::GF::ex_synth_div(&data[0], RS::ecc + 1, &generator[0], RS::ecc + 1);
-
-                    for (unsigned j = 0; j < RS::ecc; ++j)
-                        generator_lut[i][j] = data[j + 1];
+                    for (unsigned j = 1; j < N; ++j)
+                        generator_lut[j][i] =
+                                (generator_lut[j - 1][i] >> 8) ^
+                                generator_lut[0][generator_lut[j - 1][i] % RS::GF::charact];
                 }
             }
         } sdata{};
 
         static inline void encode(uint8_t *output, const uint8_t *data, unsigned size) {
-            std::memset(output, 0, RS::ecc);
-            for (unsigned i = 0; i < size; ++i) {
-                uint8_t pos = output[0] ^ data[i];
-                output[0] = 0;
-                std::rotate(output, output + 1, output + RS::ecc);
-                std::transform(output, output + RS::ecc,
-                        &sdata.generator_lut[pos][0],
-                        output, std::bit_xor());
+            unsigned i = 0;
+            Word rem = 0;
+
+            if constexpr (N > 1) {
+                static_assert(N % RS::ecc == 0);
+
+                for (; size - i >= N; i += N) {
+                    auto in = reinterpret_cast<const Word *>(&data[i]);
+                    rem ^= *in++;
+                    Word t = 0;
+                    for (unsigned j = 0; j < RS::ecc; ++j)
+                        t ^= sdata.generator_lut[N - j - 1][(rem >> (8 * j)) & 0xff];
+
+                    for (unsigned k = 1; k < N / RS::ecc; ++k) {
+                        auto two = *in++;
+                        for (unsigned j = 0; j < RS::ecc; ++j)
+                            t ^= sdata.generator_lut[N - k * RS::ecc - j - 1][(two >> (8 * j)) & 0xff];
+                    }
+                    rem = t;
+                }
             }
+
+            for (; i < size; ++i)
+                rem = (rem >> 8) ^ sdata.generator_lut[0][(rem & 0xff) ^ data[i]];
+
+            // endianess dependent
+            for (unsigned i = 0; i < RS::ecc; ++i)
+                output[i] = rem >> (8 * i);
         }
     };
 };
-
-template<typename RS>
-using rs_encode_lut1 = rs_encode_lut_t<uint8_t>::type<RS>;
-template<typename RS>
-using rs_encode_lut4 = rs_encode_lut_t<uint32_t>::type<RS>;
-template<typename RS>
-using rs_encode_lut8 = rs_encode_lut_t<uint64_t>::type<RS>;
-
-
 
 template<typename RS>
 struct rs_synds_basic {
