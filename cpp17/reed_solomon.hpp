@@ -78,9 +78,9 @@ namespace detail {
 }
 
 
-template<typename GF_t, unsigned Ecc>
+template<typename _GF, unsigned Ecc>
 struct rs_base {
-    using GF = GF_t;
+    using GF = _GF;
     static constexpr auto ecc = Ecc;
 };
 
@@ -259,7 +259,7 @@ struct rs_synds_lut_t {
         static constexpr auto ecc_w = (RS::ecc / sizeof(Word)) + !!(RS::ecc % sizeof(Word));
         static constexpr auto synds_size = ecc_w * sizeof(Word);
         static constexpr auto synds_align = sizeof(Word);
-        using synds_array_t alignas(sizeof(Word)) = uint8_t[synds_size];
+        using synds_array_t /* alignas(sizeof(Word)) */ = uint8_t[synds_size];
 
         static inline constexpr struct sdata_t {
             union {
