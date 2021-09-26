@@ -23,8 +23,8 @@ void benchmark_enc_dec() {
 
     uint8_t buffer[msglen + ecclen];
 
-    using GF = ::GF<uint8_t, 2, 8, 2, 0x11d & 0xff, gf_add_xor, gf_exp_log_lut, gf_mul_exp_log_lut>;
-    using RS = ::RS<GF, ecclen, rs_encode_slice<uint64_t, 8>::type, rs_synds_basic, rs_roots_eval_basic, rs_decode>;
+    using GF = ::GF<uint8_t, 2, 8, 2, uint8_t(0x11d), gf_add_xor, gf_exp_log_lut, gf_mul_exp_log_lut>;
+    using RS = ::RS<GF, ecclen, rs_encode_slice<uint64_t, 16>::type, rs_synds_lut8, rs_roots_eval_chien, rs_decode>;
 
     std::cout << "sizeof(RS<" << ecclen << ">) = " << sizeof(RS) << std::endl;
     std::cout << "GF::static_data_size: " << GF::static_data_size << std::endl;
@@ -53,7 +53,7 @@ void benchmark_enc_dec() {
 
         {
             auto start = hrc::now();
-            RS::decode(buffer, msglen + ecclen);
+            RS::decode(&buffer[0], msglen, &buffer[msglen]);
             t_dec += hrc::now() - start;
         }
 
@@ -109,7 +109,7 @@ void benchmark_enc_257() {
 
         {
             auto start = hrc::now();
-            RS::decode(buffer, msglen + ecclen);
+            RS::decode(&buffer[0], msglen, &buffer[msglen]);
             t_dec += hrc::now() - start;
         }
 

@@ -58,7 +58,7 @@ template<typename GF>
 struct gf_mul_cpu {
     using GFT = typename GF::Repr;
 
-    template<typename T = GF, std::enable_if_t<T::prime == 2, bool> = true>
+    template<typename _GF = GF, std::enable_if_t<_GF::prime == 2, bool> = true>
     static inline constexpr GFT mul(GFT const& a, GFT const& b) {
         GFT r = 0;
 
@@ -76,7 +76,7 @@ struct gf_mul_cpu {
         return r;
     }
 
-    template<typename T = GF, std::enable_if_t<T::power == 1, bool> = true>
+    template<typename _GF = GF, std::enable_if_t<_GF::power == 1, bool> = true>
     static inline constexpr GFT mul(GFT const& lhs, GFT const& rhs) { return (lhs * rhs) % GF::prime; }
 };
 
@@ -128,7 +128,7 @@ struct gf_mul_lut {
     static_assert(GF::charact <= 4096); // limit 16MB
 
     static inline constexpr struct sdata_t {
-        std::array<std::array<GFT, GF::charact>, GF::charact> mul{};
+        GFT mul[GF::charact][GF::charact] = {};
 
         constexpr inline sdata_t() {
             for (unsigned i = 0; i < GF::charact; ++i) {
@@ -161,33 +161,33 @@ struct gf_mul_exp_log_lut {
     }
 };
 
-template<typename GF, typename T>
+template<typename GF, typename Word>
 class gf_wide_mul {
     static_assert(std::is_same_v<typename GF::Repr, uint8_t>);
 
 private:
-    static inline constexpr T _w(uint8_t n) {
-        T p = 0;
-        for (unsigned i = 0; i < sizeof(T); ++i)
-            p |= T(n) << (i * 8);
+    static inline constexpr Word _w(uint8_t n) {
+        Word p = 0;
+        for (unsigned i = 0; i < sizeof(Word); ++i)
+            p |= Word(n) << (i * 8);
 
         return p;
     }
 
 public:
-    static constexpr T polyw = _w(GF::poly1);
+    static constexpr Word polyw = _w(GF::poly1);
 
-    static inline constexpr T mul(T a, T b) {
-        T r = 0;
+    static inline constexpr Word mul(Word a, Word b) {
+        Word r = 0;
         for (int i = 7; i >= 0; --i) {
-            T m = r & _w(0x80);
+            Word m = r & _w(0x80);
 
             static_assert((GF::poly1 & 0x80) == 0); // needed for the next statement
             m = m - (m >> 7);
 
             r = ((r & _w(0x7f)) << 1) ^ (polyw & m);
 
-            T n = (a & (_w(0x01) << i)) >> i;
+            Word n = (a & (_w(0x01) << i)) >> i;
             n = (n << 8) - n;
 
             r ^= b & n;
@@ -195,8 +195,7 @@ public:
         return r;
     }
 
-    static inline constexpr T poly_eval(const uint8_t poly[], const unsigned size, const T x) {
-        T r = 0;
+    static inline constexpr Word poly_eval(const uint8_t poly[], const unsigned size, const Word x, Word r = 0) {
         for (unsigned i = 0; i < size; ++i)
             r = mul(r, x) ^ (poly[i] * _w(0x01));
         return r;
@@ -223,8 +222,8 @@ template<typename GF>
 struct gf_poly {
     using GFT = typename GF::Repr;
 
-    template<typename T>
-    static inline constexpr unsigned ex_synth_div(T a[], unsigned size_a, const T b[], unsigned size_b) {
+    template<typename T, typename U>
+    static inline constexpr unsigned ex_synth_div(T a[], unsigned size_a, const U b[], unsigned size_b) {
         // T normalizer = b[0];
         // assert(b[0] == 1);
 
@@ -312,8 +311,7 @@ struct gf_poly {
     }
 
     template<typename T>
-    static inline constexpr GFT poly_eval(const T poly[], const unsigned size, GFT const& x) {
-        T r = 0;
+    static inline constexpr GFT poly_eval(const T poly[], const unsigned size, GFT const& x, GFT r = 0) {
         for (unsigned i = 0; i < size; ++i)
             r = GF::add(GF::mul(r, x), poly[i]);
         return r;

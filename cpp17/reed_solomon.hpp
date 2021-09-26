@@ -90,6 +90,7 @@ struct rs_generator {
         using GFT = typename RS::GF::Repr;
 
         GFT generator[RS::ecc + 1] = {};
+        GFT roots[RS::ecc] = {};
 
         inline constexpr sdata_t() {
             GFT temp[RS::ecc + 1] = {};
@@ -101,7 +102,8 @@ struct rs_generator {
             p2[0] = 1;
 
             for (unsigned i = 0; i < RS::ecc; ++i) {
-                GFT factor[] = {1, RS::GF::sub(0, RS::GF::exp(i))};
+                roots[i] = RS::GF::exp(i);
+                GFT factor[] = {1, RS::GF::sub(0, roots[i])};
                 len = RS::GF::poly_mul(p1, p2, len, factor, 2);
 
                 auto t = p1;
@@ -129,10 +131,12 @@ struct rs_encode_basic {
 
 template<typename RS>
 struct rs_encode_lut {
+    static_assert(RS::GF::prime == 2);
+
     static constexpr auto& generator = rs_generator<RS>::sdata.generator;
 
     static inline constexpr struct sdata_t {
-        std::array<std::array<uint8_t, RS::ecc>, RS::GF::charact> generator_lut{};
+        uint8_t generator_lut[RS::GF::charact][RS::ecc] = {};
 
         constexpr inline sdata_t() {
             for (unsigned i = 0; i < RS::GF::charact; ++i) {
@@ -178,14 +182,9 @@ struct rs_encode_slice {
                     data[0] = uint8_t(i);
                     RS::GF::ex_synth_div(&data[0], RS::ecc + 1, &generator[0], RS::ecc + 1);
 
-                    Word rem = 0;
-
                     // endianess dependent
                     for (unsigned j = 0; j < RS::ecc; ++j)
-                        rem = (rem << 8) | data[RS::ecc - j];
-                        // rem = (rem << 8) | data[j + 1];
-
-                    generator_lut[0][i] = rem;
+                        generator_lut[0][i] |= Word(data[j + 1]) << ( j) * 8;
                 }
 
                 for (unsigned i = 0; i < RS::GF::charact; ++i) {
@@ -235,19 +234,14 @@ struct rs_synds_basic {
     using GFT = typename RS::GF::Repr;
     using synds_array_t = GFT[RS::ecc];
 
-    static inline constexpr struct sdata_t {
-        std::array<GFT, RS::ecc> gen_roots{};
+    static constexpr auto& gen_roots = rs_generator<RS>::sdata.roots;
 
-        inline constexpr sdata_t() {
-            for (unsigned i = 0; i < RS::ecc; ++i)
-                gen_roots[i] = RS::GF::exp(i);
+    template<typename S, typename T>
+    static inline void synds(synds_array_t synds, S const& data, unsigned size, T const& rem) {
+        for (unsigned i = 0; i < RS::ecc; ++i) {
+            auto t = RS::GF::poly_eval(data, size, gen_roots[i]);
+            synds[i] = RS::GF::poly_eval(rem, RS::ecc, gen_roots[i], t);
         }
-    } sdata{};
-
-    template<typename S>
-    static inline void synds(S const& data, unsigned size, synds_array_t synds) {
-        for (unsigned i = 0; i < RS::ecc; ++i)
-            synds[i] = RS::GF::poly_eval(data, size, sdata.gen_roots[i]);
     }
 };
 
@@ -258,25 +252,24 @@ struct rs_synds_lut_t {
     struct type {
         static constexpr auto ecc_w = (RS::ecc / sizeof(Word)) + !!(RS::ecc % sizeof(Word));
         static constexpr auto synds_size = ecc_w * sizeof(Word);
-        static constexpr auto synds_align = sizeof(Word);
         using synds_array_t /* alignas(sizeof(Word)) */ = uint8_t[synds_size];
 
         static inline constexpr struct sdata_t {
-            union {
-                std::array<uint8_t, synds_size> u8;
-                std::array<Word, ecc_w> word;
-            } gen_roots{};
+            Word gen_roots[ecc_w] = {};
 
             inline constexpr sdata_t() {
                 for (unsigned i = 0; i < RS::ecc; ++i)
-                    gen_roots.u8[i] = Word(RS::GF::exp(i));
+                    // endianess dependent
+                    gen_roots[i / sizeof(Word)] |= Word(RS::GF::exp(i)) << (i % sizeof(Word)) * 8;
             }
         } sdata{};
 
-        static inline void synds(const uint8_t *data, unsigned size, uint8_t synds[]) {
+        static inline void synds(uint8_t synds[], const uint8_t *data, unsigned size, const uint8_t *rem) {
             auto synds_w = reinterpret_cast<Word *>(synds);
-            for (unsigned i = 0; i < ecc_w; ++i)
-                synds_w[i] = gf_wide_mul<typename RS::GF, Word>::poly_eval(data, size, sdata.gen_roots.word[i]);
+            for (unsigned i = 0; i < ecc_w; ++i) {
+                auto t = gf_wide_mul<typename RS::GF, Word>::poly_eval(data, size, sdata.gen_roots[i]);
+                synds_w[i] = gf_wide_mul<typename RS::GF, Word>::poly_eval(rem, RS::ecc, sdata.gen_roots[i], t);
+            }
         }
     };
 };
@@ -387,10 +380,10 @@ template<typename RS>
 struct rs_decode {
     using GFT = typename RS::GF::Repr;
 
-    template<typename T>
-    static inline bool decode(T& data, unsigned size) {
+    template<typename T, typename U>
+    static inline bool decode(T data, unsigned size, U rem) {
         typename RS::synds_array_t synds;
-        RS::synds(data, size, synds);
+        RS::synds(synds, &data[0], size, rem);
 
         if (std::all_of(&synds[0], &synds[RS::ecc], std::logical_not()))
             return true;
@@ -399,7 +392,7 @@ struct rs_decode {
         auto errors = berlekamp_massey(synds, err_poly);
 
         GFT err_pos[RS::ecc / 2];
-        auto roots = RS::roots(&err_poly[RS::ecc-errors-1], errors+1, err_pos, size);
+        auto roots = RS::roots(&err_poly[RS::ecc-errors-1], errors+1, err_pos, size + RS::ecc);
 
         if (errors != roots)
             return false;
@@ -408,11 +401,14 @@ struct rs_decode {
         forney(synds, &err_poly[RS::ecc-errors-1], err_pos, errors, err_mag);
 
         for (unsigned i = 0; i < errors; ++i) {
-            unsigned pos = size - 1 - err_pos[i];
-            if (pos >= size)
+            unsigned pos = size + RS::ecc - 1 - err_pos[i];
+            if (pos >= size + RS::ecc)
                 return false;
 
-            data[pos] = RS::GF::add(data[pos], err_mag[i]);
+            if (pos < size)
+                data[pos] = RS::GF::add(data[pos], err_mag[i]);
+            else
+                rem[pos - size] = RS::GF::add(rem[pos - size], err_mag[i]);
         }
 
         return true;

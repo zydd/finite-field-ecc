@@ -96,11 +96,11 @@ void encode257(void *rs, uint16_t a[], unsigned size) {
 }
 
 void decode(void *rs, uint8_t a[], unsigned size) {
-    reinterpret_cast<context *>(rs)->rs0.decode(a, size);
+    reinterpret_cast<context *>(rs)->rs0.decode(a, size - RS0::ecc, a + size - RS0::ecc);
 }
 
 void decode257(void *rs, uint16_t a[], unsigned size) {
-    reinterpret_cast<context *>(rs)->rs1.decode(a, size);
+    reinterpret_cast<context *>(rs)->rs1.decode(a, size - RS1::ecc, a + size - RS1::ecc);
 }
 
 }
