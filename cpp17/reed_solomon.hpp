@@ -1,9 +1,7 @@
 #pragma once
 
 #include <algorithm>
-#include <cstring>
 #include <functional>
-#include <memory>
 
 #include "galois.hpp"
 
@@ -151,7 +149,7 @@ struct rs_encode_lut {
     } sdata{};
 
     static inline void encode(uint8_t *output, const uint8_t *data, unsigned size) {
-        std::memset(output, 0, RS::ecc);
+        std::fill_n(output, RS::ecc, 0x00);
         for (unsigned i = 0; i < size; ++i) {
             uint8_t pos = output[0] ^ data[i];
             output[0] = 0;
@@ -184,7 +182,7 @@ struct rs_encode_slice {
 
                     // endianess dependent
                     for (unsigned j = 0; j < RS::ecc; ++j)
-                        generator_lut[0][i] |= Word(data[j + 1]) << ( j) * 8;
+                        generator_lut[0][i] |= Word(data[j + 1]) << j * 8;
                 }
 
                 for (unsigned i = 0; i < RS::GF::charact; ++i) {
@@ -240,7 +238,7 @@ struct rs_synds_basic {
     static inline void synds(synds_array_t synds, S const& data, unsigned size, T const& rem) {
         for (unsigned i = 0; i < RS::ecc; ++i) {
             auto t = RS::GF::poly_eval(data, size, gen_roots[i]);
-            synds[i] = RS::GF::poly_eval(rem, RS::ecc, gen_roots[i], t);
+            synds[RS::ecc - i - 1] = RS::GF::poly_eval(rem, RS::ecc, gen_roots[i], t);
         }
     }
 };
@@ -259,8 +257,8 @@ struct rs_synds_lut_t {
 
             inline constexpr sdata_t() {
                 for (unsigned i = 0; i < RS::ecc; ++i)
-                    // endianess dependent
-                    gen_roots[i / sizeof(Word)] |= Word(RS::GF::exp(i)) << (i % sizeof(Word)) * 8;
+                    // reverse-order syndromes, endianess dependent
+                    gen_roots[i / sizeof(Word)] |= Word(RS::GF::exp(RS::ecc - i - 1)) << (i % sizeof(Word)) * 8;
             }
         } sdata{};
 
@@ -414,14 +412,67 @@ struct rs_decode {
         return true;
     }
 
-    static inline unsigned berlekamp_massey(const GFT synds[RS::ecc], GFT err_poly[RS::ecc]) {
-        GFT prev[RS::ecc];
-        GFT temp[RS::ecc];
+    template<typename T, typename U, typename V>
+    static inline bool decode(T data, unsigned size, U rem, const V err_idx, unsigned errors) {
+        if (errors > RS::ecc)
+            return false;
 
-        for (unsigned i = 0; i < RS::ecc; ++i) {
-            err_poly[i] = 0;
-            prev[i] = 0;
+        typename RS::synds_array_t synds;
+        RS::synds(synds, &data[0], size, rem);
+
+        if (std::all_of(&synds[0], &synds[RS::ecc], std::logical_not()))
+            return true;
+
+        GFT err_pos[RS::ecc];
+        for (unsigned i = 0; i < errors; ++i) {
+            if (err_idx[i] > size + RS::ecc - 1)
+                return false;
+
+            err_pos[i] = size + RS::ecc - 1 - err_idx[i];
         }
+
+        GFT err_poly[RS::ecc + 1] = {1};
+        unsigned err_poly_len = 1;
+
+        {
+            GFT temp[RS::ecc + 1] = {1};
+
+            auto p1 = (errors & 1) ? &err_poly[0] : &temp[0];
+            auto p2 = (errors & 1) ? &temp[0] : &err_poly[0];
+
+            for (unsigned i = 0; i < errors; ++i) {
+                GFT factor[2] = {RS::GF::sub(0, RS::GF::exp(err_pos[i])), 1};
+                err_poly_len = RS::GF::poly_mul(p1, p2, err_poly_len, factor, 2);
+                std::swap(p1, p2);
+            }
+        }
+
+        assert(err_poly_len == errors + 1);
+
+        GFT err_mag[RS::ecc];
+        forney(synds, err_poly, err_pos, errors, err_mag);
+
+        for (unsigned i = 0; i < errors; ++i) {
+            unsigned pos = err_idx[i];
+            if (pos >= size + RS::ecc)
+                return false;
+
+            if (pos < size)
+                data[pos] = RS::GF::add(data[pos], err_mag[i]);
+            else
+                rem[pos - size] = RS::GF::add(rem[pos - size], err_mag[i]);
+        }
+
+        return true;
+    }
+
+    static inline unsigned berlekamp_massey(const GFT synds_rev[RS::ecc], GFT err_poly[RS::ecc]) {
+        GFT prev[RS::ecc] = {};
+        GFT temp[RS::ecc];
+        GFT synds[RS::ecc];
+        std::reverse_copy(synds_rev, &synds_rev[RS::ecc], synds);
+        std::fill_n(err_poly, RS::ecc, 0);
+
         prev[RS::ecc-1] = 1;
         err_poly[RS::ecc-1] = 1;
 
@@ -465,22 +516,18 @@ struct rs_decode {
     }
 
     static inline void forney(
-            const GFT synds[RS::ecc], GFT err_poly[], const GFT err_pos[],
+            const GFT synds_rev[RS::ecc], GFT err_poly[], const GFT err_pos[],
             const unsigned err_count, GFT err_mag[])
     {
-        GFT temp[RS::ecc] = {1};
-
         GFT err_eval[RS::ecc * 2];
-        typename RS::synds_array_t synds_rev;
-        std::reverse_copy(synds, &synds[RS::ecc], synds_rev);
+        auto err_eval_size = RS::GF::poly_mul(err_eval,
+                synds_rev, RS::ecc,
+                err_poly, err_count + 1);
 
-        auto err_eval_size = RS::GF::poly_mul(
-                err_eval, synds_rev,
-                RS::ecc, err_poly, err_count + 1);
-
+        GFT x_poly[RS::ecc + 1] = {1};
         auto err_eval_begin = RS::GF::ex_synth_div(
                 err_eval, err_eval_size,
-                temp, RS::ecc);
+                x_poly, RS::ecc + 1);
         while (err_eval[err_eval_begin] == 0) {
             err_eval_begin++;
             assert(err_eval_begin < err_eval_size);

@@ -20,8 +20,10 @@ void benchmark_enc_dec() {
 
     const unsigned ecclen = 8;
     const unsigned msglen = 255-ecclen;
+    const unsigned errors = 4;
 
     uint8_t buffer[msglen + ecclen];
+    uint8_t err_pos[ecclen];
 
     using GF = ::GF<uint8_t, 2, 8, 2, uint8_t(0x11d), gf_add_xor, gf_exp_log_lut, gf_mul_exp_log_lut>;
     using RS = ::RS<GF, ecclen, rs_encode_slice<uint64_t, 16>::type, rs_synds_lut8, rs_roots_eval_chien, rs_decode>;
@@ -48,16 +50,34 @@ void benchmark_enc_dec() {
         std::copy_n(buffer, msglen + ecclen, buffer2);
 
         // errors
-        for (unsigned i = 0; i < ecclen/2; ++i)
-            buffer[mersenne() % (msglen + ecclen)] ^= mersenne();
+        for (unsigned i = 0; i < errors; ++i) {
+            unsigned pos;
+            do
+                pos = mersenne() % (msglen + ecclen);
+            while (std::find(err_pos, err_pos + i, pos) != (err_pos + i));
+
+            err_pos[i] = pos;
+            buffer[pos] ^= mersenne();
+        }
 
         {
             auto start = hrc::now();
             RS::decode(&buffer[0], msglen, &buffer[msglen]);
+            // RS::decode(&buffer[0], msglen, &buffer[msglen], err_pos, errors);
             t_dec += hrc::now() - start;
         }
 
-        assert(std::equal(buffer, buffer + msglen + ecclen, buffer2));
+        if (! std::equal(buffer, buffer + msglen + ecclen, buffer2)) {
+            std::printf("exp: ");
+            for (unsigned i = 0; i < msglen + ecclen; ++i)
+                std::printf("%02x ", buffer2[i]);
+            std::printf("\n");
+            std::printf("got: ");
+            for (unsigned i = 0; i < msglen + ecclen; ++i)
+                std::printf("%02x ", buffer[i]);
+            std::printf("\n");
+            assert(false);
+        }
         processed += msglen;
     }
 
@@ -73,8 +93,10 @@ void benchmark_enc_257() {
 
     const unsigned ecclen = 8;
     const unsigned msglen = 256-ecclen;
+    const unsigned errors = 8;
 
     uint16_t buffer[msglen + ecclen];
+    unsigned err_pos[ecclen];
 
     using GF = ::GF<uint16_t, 257, 1, 3, 0, gf_add_ring, gf_mul_cpu, gf_exp_log_lut>;
     using RS = ::RS<GF, ecclen, rs_encode_basic, rs_synds_basic, rs_roots_eval_basic, rs_decode>;
@@ -89,27 +111,33 @@ void benchmark_enc_257() {
 
     auto start = hrc::now();
     while (hrc::now() - start < std::chrono::seconds(2)) {
-        std::fill(buffer, buffer + msglen + ecclen, 0);
-        fill_random(buffer, msglen);
-        std::fill(buffer, buffer + msglen, 5);
+        fill_random(buffer, msglen + ecclen);
 
         {
             auto start = hrc::now();
             RS::encode(buffer + msglen, buffer, msglen);
-            auto &gen = rs_generator<RS>::sdata.generator;
             t_enc += hrc::now() - start;
         }
 
         uint16_t buffer2[msglen + ecclen];
         std::copy_n(buffer, msglen + ecclen, buffer2);
 
+
         // errors
-        for (unsigned i = 0; i < ecclen/2; ++i)
-            buffer[mersenne() % (msglen + ecclen)] ^= mersenne() & 0xff;
+        for (unsigned i = 0; i < errors; ++i) {
+            unsigned pos;
+            do
+                pos = mersenne() % (msglen + ecclen);
+            while (std::find(err_pos, err_pos + i, pos) != (err_pos + i));
+
+            err_pos[i] = pos;
+            buffer[pos] ^= mersenne();
+        }
 
         {
             auto start = hrc::now();
-            RS::decode(&buffer[0], msglen, &buffer[msglen]);
+            // RS::decode(&buffer[0], msglen, &buffer[msglen]);
+            RS::decode(&buffer[0], msglen, &buffer[msglen], err_pos, errors);
             t_dec += hrc::now() - start;
         }
 

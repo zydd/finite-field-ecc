@@ -120,6 +120,10 @@ struct gf_exp_log_lut {
     static inline constexpr GFT log(GFT const& a) {
         return sdata.log[a];
     }
+
+    static inline constexpr GFT pow(GFT const& a, GFT const& b) {
+        return sdata.exp[(sdata.log[a] * b) % (GF::charact - 1)];
+    }
 };
 
 template<typename GF>
