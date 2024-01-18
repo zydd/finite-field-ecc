@@ -315,7 +315,15 @@ class Fp(P):
         x = ('' if self.GF.p < 16 else ' ').join(a)
         return f'F{self.GF.p}[{x}]'
 
+    def __repr__(self):
+        a = (f'{int(x):x}' for x in reversed(self.x))
+        x = ('' if self.GF.p < 16 else ' ').join(a)
+        return f'F{self.GF.p}[{x}]'
+
     def __int__(self):
+        return self.x_i
+
+    def __hash__(self):
         return self.x_i
 
 class GF:
